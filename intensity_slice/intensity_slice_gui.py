@@ -1140,12 +1140,10 @@ class MainFrame(wx.Frame):
         
         # Drop incomplete slices from the DataFrame
         if len(coordinates) > 1:
-            
             # The number of (unique!) elements of the last slice in the file
             sizeOfFinalSlice = len(data[coordinates[-1]['name']].loc[
                     data[coordinates[-2]['name']] == data[coordinates[-2]
-                    ['name']].iloc[-1]].unique())
-                        
+                    ['name']].iloc[-1]].unique())                        
             # If the number of elements in the last slice is less than the others, drop the last slice
             # Note that this won't work if the second last column isn't the slice column, and the last isn't the repeating column
             if coordinates[-1]['size'] != sizeOfFinalSlice:
@@ -1196,7 +1194,7 @@ class MainFrame(wx.Frame):
         if self.value_func is None:
             self.draw(self.x_idx, self.y_idx, self.value_idx, recenter=True)
         else:
-            self.draw_function(self.value_func["function"], self.value_func["val ues"],
+            self.draw_function(self.value_func["function"], self.value_func["values"],
                                recenter=True)
             
     def reload_data(self):
@@ -1215,13 +1213,13 @@ class MainFrame(wx.Frame):
 #         del mydata
 # =============================================================================
             self.load_data(self.directory, self.filename)
-
-        if self.value_func is None:
-            self.draw(self.x_idx, self.y_idx, self.value_idx, recenter=False)
-        else:
-            self.draw_function(self.value_func["function"], self.value_func["values"],
-                               recenter=False)
-                      
+#
+#        if self.value_func is None:
+#            self.draw(self.x_idx, self.y_idx, self.value_idx, recenter=False)
+#        else:
+#            self.draw_function(self.value_func["function"], self.value_func["values"],
+#                               recenter=False)
+#                      
     def draw(self, x_idx, y_idx, value, **kwargs):
 
         # Draw MainFrame object        
