@@ -1239,7 +1239,6 @@ class MainFrame(wx.Frame):
         else:
             self.draw_function(self.value_func["function"], self.value_func["values"],
                                recenter=False)
-                      
     def draw(self, x_idx, y_idx, value, **kwargs):
 
         # Draw MainFrame object        
