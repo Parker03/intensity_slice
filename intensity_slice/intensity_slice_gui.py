@@ -8,6 +8,7 @@ Created on May 25, 2013
 import wx
 import numpy as np
 import pandas as pd
+import sys
 import copy
 import os
 import types
@@ -977,6 +978,9 @@ class MainFrame(wx.Frame):
         # Defines which slices of 2D data should be plotted (selects the
         # index of the coordinates that are not plotted) 
         self.data_selection = []
+        
+        # TEMPORARY
+        self.data_frame = None
 
 
         
@@ -1229,14 +1233,12 @@ class MainFrame(wx.Frame):
 #         mydata.close_file()
 #         del mydata
 # =============================================================================
-            self.load_data(self.directory, self.filename)
-#
-#        if self.value_func is None:
-#            self.draw(self.x_idx, self.y_idx, self.value_idx, recenter=False)
-#        else:
-#            self.draw_function(self.value_func["function"], self.value_func["values"],
-#                               recenter=False)
-#                      
+        self.load_data(self.directory, self.filename)
+        if self.value_func is None:
+            self.draw(self.x_idx, self.y_idx, self.value_idx, recenter=False)
+        else:
+            self.draw_function(self.value_func["function"], self.value_func["values"],
+                               recenter=False)
     def draw(self, x_idx, y_idx, value, **kwargs):
 
         # Draw MainFrame object        
@@ -1252,6 +1254,7 @@ class MainFrame(wx.Frame):
             self.get_coordinate(x_idx),
             self.get_coordinate(y_idx),
             self.get_data_slice(value),
+            #dataframe.pivot(columns=self.get_coordinate(x_idx), index = self.get_coordinate(y_idx), values=)
             **kwargs
             )         
 
@@ -1407,4 +1410,11 @@ class App(wx.App):
 
 if __name__ == '__main__':
     app = App(False)
+    #app.MainLoop()
+    #from custom_lib.intensity_slice_gui import App
+    if len(sys.argv)>1:
+        directory, filename = os.path.split(sys.argv[1])
+        app.frame1.directory = directory
+        app.frame1.filename = filename
+        app.frame1.load_data(directory, filename)
     app.MainLoop()
