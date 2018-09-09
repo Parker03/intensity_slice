@@ -19,6 +19,9 @@ import linecache
 import matplotlib
 matplotlib.use('WXAgg')
 
+# FOR TESTING
+import time
+
 from mpl_wxwidgets import Cursor
 from wx.lib.scrolledpanel import ScrolledPanel
 
@@ -145,6 +148,7 @@ class MathPanel(wx.Panel):
         self.t_param.SetValue("0")
         self.button_reload = wx.Button(self, wx.ID_ANY, label="Reload Functions")
         self.button_fourier_transform = wx.Button(self, wx.ID_ANY, label = "Fourier Transform (FFT)")
+        self.button_copy_file_path = wx.Button(self, wx.ID_ANY, label = "Copy File Path")
         
         self.text = wx.TextCtrl(self, style=wx.TE_MULTILINE | wx.TE_READONLY)
         
@@ -153,6 +157,8 @@ class MathPanel(wx.Panel):
         self.t_param.Bind(wx.EVT_TEXT_ENTER, self.on_text_param)
         self.button_reload.Bind(wx.EVT_BUTTON, self.on_reload)
         self.button_fourier_transform.Bind(wx.EVT_BUTTON, self.fourier_transform)
+        self.button_copy_file_path.Bind(wx.EVT_BUTTON, self.copy_file_path)
+        
         
         self._do_layout()
         
@@ -190,6 +196,7 @@ class MathPanel(wx.Panel):
                     border=5)
         sizer_v.Add(self.button_reload)
         sizer_v.Add(self.button_fourier_transform)
+        sizer_v.Add(self.button_copy_file_path)
         self.SetSizer(sizer_v)
 
     def _clear_functions(self):
@@ -221,8 +228,17 @@ class MathPanel(wx.Panel):
         self.cb_value.SetSelection(index)
         self.draw()
         
+    def copy_file_path(self, event):
+        # TODO: Copy the file directory + name to clipboard (needs to be changed to a button)
+        try:
+            pd.Series([self.frame.directory+"\\"+self.frame.filename]).to_clipboard(index=False)
+        except AttributeError:
+            print("No file is currently loaded.")
+    
     def fourier_transform(self, event):
-        self.frame.left_panel.plot_window.fourier_plot()
+        values = [self.dl_values.GetItemText(i) for i 
+                  in range(self.dl_values.GetItemCount())]
+        self.frame.draw_fourier_function(values)
 
     def on_cb_value(self, event):
         self.draw()
@@ -836,25 +852,8 @@ class PlotWindow(wx.Panel):
         
         #self.repaint()
         #self.canvas.draw()
-        
-    def fourier_plot(self):
-        self.x_slice_plot.clear()
-        
-        if self.data.shape[0] < abs(self.y_idx):
-            self.y_idx = -1
-        
-        xslice = self.data.xs(self.data.index[self.y_idx],0)
-        
-        # Fast fourier transforms the data along the x domain
-        N = len(self.x)
-        T = 1/max(self.x)
-        yf = np.fft.fft(xslice)
-        xf = np.linspace(0,1.0/(2.0*T),N)
-        
-        self.x_slice_plot.plot(xf, 2.0/N * np.abs(yf))
-        self.repaint()
             
-    def draw(self, x, y, data, recenter=True):
+    def draw(self, x, y, data, recenter=True, labels = None, labelled_axis = None):
         
         ###DEBUG
         #print 'draw (1)'
@@ -921,11 +920,18 @@ class PlotWindow(wx.Panel):
 
 
         self.intensity_plot.set_title(self.frame.filename)
-        if self.frame.data_labels != None:  
-            self.intensity_plot.set_xticks(self.frame.data_locs)
-            self.intensity_plot.set_xticklabels(self.frame.data_labels)
-        
-
+        if labels != None:
+            if labelled_axis == 0:
+                self.intensity_plot.set_xticks(self.frame.data_label_locs)
+                self.intensity_plot.set_xticklabels(self.frame.data_labels)
+            elif labelled_axis == 1:
+                self.intensity_plot.set_yticks(self.frame.data_label_locs)
+                self.intensity_plot.set_yticklabels(self.frame.data_labels)
+            else:
+                raise ValueError("labelled axis must be either 0 (x-axis) or 1 (y-axis)")
+                
+                
+            
         
         if recenter:
             self._cursors_recenter()
@@ -958,10 +964,11 @@ class MainFrame(wx.Frame):
         # crash the application
         self.filename = None
         
-        # This is to add labels to the data. It seems like bad practice to make
-        # them class variables, but this seems like the easiest way to do
-        # it.
-        self.data_locs = None
+        # This is to store labels for labelled data. It seems like bad 
+        # practice to make them class variables, but this seems like 
+        # the easiest way to do it. The problem is that a different class
+        # needs to access these variables.
+        self.data_label_locs = None
         self.data_labels = None
 
         super(MainFrame, self).__init__(parent, id_, size=self.size, **kwargs)
@@ -990,18 +997,14 @@ class MainFrame(wx.Frame):
         
         self.bind_events()
         
-        self.x_idx = 0
-        self.y_idx = 1
+        self.x_idx = 1
+        self.y_idx = 0
         self.value_idx = -1
         
-        # Defines which slices of 2D data should be plotted (selects the
-        # index of the coordinates that are not plotted) 
+        # used to define a slice of data
         self.data_selection = []
         
-        # TEMPORARY
         self.data_frame = None
-
-
         
     def init_menu(self):
         menu_bar = wx.MenuBar()
@@ -1058,7 +1061,8 @@ class MainFrame(wx.Frame):
     def on_coord_slider(self, event):
         coord_idx = event.GetEventObject().Parent.id
         position = event.GetInt()
-        self.data_selection[coord_idx] = self.data_frame.reset_index().iloc[:,coord_idx].unique()[position]
+        coord_values = self.data_frame.reset_index().iloc[:,coord_idx].unique()
+        self.data_selection[coord_idx] = coord_values[position]
         if self.value_func is None:
             self.draw(self.x_idx, self.y_idx, self.value_idx)
         else:
@@ -1094,160 +1098,151 @@ class MainFrame(wx.Frame):
 
         file_dialog.Destroy()
         
-    def load_data(self, directory, file_name):
-        # Copy the file directory + name to clipboard (needs to be changed to a button)
-        pd.Series([directory+"\\"+file_name]).to_clipboard(index=False)
-        # Set the title of the window to the directory of the loaded file
-        self.SetTitle(directory+"\\"+file_name)
-        
-        file_ = types.StringType(os.path.join(directory, file_name))
-        
-        f = open(file_,"r")
-
-        # Store the information contained in the first few lines in the file
-        
+    def get_coordinates_and_values(self, file_):
+        """
+        Store the information about coordinates and values contained in the comments at
+        the beginning of the file (name, type, extra information).
+        """
         coordinates = []
         values = []
-        # Initialise the first 'next_' so that the loop condition works
+        f = open(file_, "r")
         next_ = f.readline().split()
-        # for each of the header lines of the file
-        while next_[0] == "#":
-            # take the column name and type
-            if next_[1] == "Column":
-                colname = f.readline().split()[2]
-                coltype = f.readline().split()[2]
-                # add the information to a list of coordinates or values
-                if coltype == "coordinate":
-                    coordinates.append({'name':colname,'type':coltype})
-                elif coltype == "value":
-                    values.append({'name':colname,'type':coltype})
-                else:
-                    raise ValueError("Inputs should only be of type coordinate or value")                   
-            # go to the next line
+        # Intruction to skip to the first "Column" line
+        next_ = [0,0]
+        while next_[1] != "Column":
             next_ = f.readline().split()
-        
-        #number of intro lines in the file (so that read_csv below knows how many lines to skip)    
-        numHeaderLines=3*(len(coordinates)+len(values))+1
-        
-        columns = coordinates+values
-        names_=[]
-        # Get the names of the columns for the dataframe
-        for col in columns:
-            names_.append(col['name'])
-        
-        if len(coordinates) < 1:
-            f.close()
-            del coordinates
-            del values
-            raise RuntimeError('Data with less than 1 coordinate is currently '
-                               'not supported')
-        
-        # load the file data into a pandas dataframe
-        data = pd.read_csv(directory+"\\"+file_name,sep="\t",
-                           skiprows=numHeaderLines, names=names_)
+        # for each of the header lines of the file (indicated by '#')
+        while next_[0] == "#":
+            if next_[1] == "Column":
+                d = {}
+                next_ = f.readline().split()
+                # Put all lines of information below "Column x:" into dictionary form
+                while next_[1] != "Column" and next_[0] == "#":
+                    d[str(next_[1][:-1])] = str(next_[2])
+                    next_ = f.readline().split()
+                if d["type"] == "coordinate":
+                    coordinates.append(d)
+                elif d["type"] == "value":
+                    values.append(d)
+                else:
+                    raise ValueError("Inputs should only be of type coordinate or value,"+
+                                     "indicated in the file header.")
         f.close()
-
-
+        return coordinates, values                
+        
+    
+    def get_coordinate_details(self, coordinates, data):
+        """
+        Get information about the size, start and end values, and type of each coordinate.
+        
+        Note that this assumes that at most one coordinate contains labelled data.
+        """
         label_to_index = {}
-        # extract information from the dataframe about the start and end values, and
-        # number of elements in each column
         for i in range(0, len(coordinates)):
-            # NOTE there could be precision issues if you evaluate an int as a float
             try:
                 coordinates[i]['start'] = np.float64(data[coordinates[i]['name']].min())
                 coordinates[i]['end'] = np.float64(data[coordinates[i]['name']].max())
-                # find the number of unique values if we're looking at the first column
+                # Find the number of unique values if we're looking at the first column
                 if i==0:
                     coordinates[i]['size'] = len(data[coordinates[i]['name']].unique())
-                # otherwise find the number of unique values of each coord in the first slice 
+                # Otherwise find the number of unique values of each coord in the first slice
+                # Used for finding the shape of the data
                 else:
                     coordinates[i]['size'] = len(data[coordinates[i]['name']].
                                loc[data[coordinates[i-1]['name']] == data[
                                        coordinates[i-1]['name']].iloc[0]].
                                        unique())
                 self.data_labels=None
+                coordinates[i]['labels'] = False
             # Handle data that's not a number (i.e. labelled data) by mapping it to integers
             except ValueError:
                 labels = data[coordinates[i]['name']].unique()
                 for j in range(0,len(labels)):
                     label_to_index[labels[j]]=j
-                self.data_locs=label_to_index.values()
+                self.data_label_locs=label_to_index.values()
                 self.data_labels=label_to_index.keys()
                 data[coordinates[i]['name']] = data[coordinates[i]['name']].map(label_to_index)
                 coordinates[i]['start'] = data[coordinates[i]['name']].min()
                 coordinates[i]['end'] = data[coordinates[i]['name']].max()
                 coordinates[i]['size'] = len(labels)
+                coordinates[i]['labels'] = True
+        # Put '$' signs around the labels so matplotlib knows they are TeX commands
+        if self.data_labels != None:
+            for i in range(0, len(self.data_labels)):
+                self.data_labels[i] = '$'+self.data_labels[i]+'$'                
+        return coordinates
         
-        # Drop incomplete slices from the DataFrame
-        if len(coordinates) > 1:
-            # The number of (unique!) elements of the last slice in the file
-            sizeOfFinalSlice = len(data[coordinates[-1]['name']].loc[
-                    data[coordinates[-2]['name']] == data[coordinates[-2]
-                    ['name']].iloc[-1]].unique())                        
-            # If the number of elements in the last slice is less than the others, drop the last slice
-            # Note that this won't work if the second last column isn't the slice column, and the last isn't the repeating column
-            if coordinates[-1]['size'] != sizeOfFinalSlice:
-                data = data.drop(data.index[(data.shape[0]-sizeOfFinalSlice):])
-                coordinates[-2]['end']-=1
-                coordinates[-2]['size']-=1
+    def get_shape(self, coordinates, values):
+        """
+        Store information about the shape of the data (for slicing purposes).
         
-        # Create array of arbitrary shape, based on number of columns of data
+        The shape returned will be the same as the shape of an equivalent numpy ndarray,
+        where each coordinate is a dimension of the ndarray. The shape is used in the
+        program because it previously used numpy.ndarray instead of pandas.DataFrame to
+        store and manipulate data.
+        
+        The shape will be of the form:
+            (coord1_size, coord2_size,...,coordn_size, num_coords_and_values)
+        """
         size = len(coordinates)+1
         shape = [0]*(size)
         for i in range(0,size-1):
             shape[i]=long(coordinates[i]['size'])
         shape[size-1]=long(len(coordinates)+len(values))
         shape = tuple(shape)
+        return shape
 
-#        # Represent the dataframe as an n-dimensional matrix
-#        matrix_data = data.as_matrix()
-#        # Slices of data for iteration
-#        # Reshape the array into a form that the data is happy with, and mask any NaN values
-#        shaped_data = np.reshape(matrix_data,shape)
-#        shaped_data = np.ma.masked_array(shaped_data,np.isnan(shaped_data))
+    def add_dummy_coordinate(self, shape, coordinates, data):
+        """
+        Add a dummy coordinate to a 1D array so that 2D slicing works.
         
+        The dummy coordinate will be a row of 1's with header 'None' and will be prepended
+        to the dataframe.
+        """
+        coordinates = [dict(type='coordinate', name='Dummy coordinate', size=1, start=1, labels=False)] + coordinates
+        self.shape = (1, shape[0], shape[1]+1L)
+        rows = len(data[data.columns[0]])
+        data['Dummy coordinate'] = pd.Series(np.ones(rows))
+        columns = data.columns.tolist()
+        # Shuffle the 'None' Coordinate to the first column postion, so that it plots on
+        # the y-axis (for use with pandas.DataFrame.xs())
+        columns = [columns[0]] + columns[-1:] + columns[1:-1]
+        data = data[columns]
+        return coordinates, data
+    
+    def load_data(self, directory, file_name):
+        """
+        Load a file_name.dat file into a pandas DataFrame, and store relevant information 
+        about the data (coordinates, values, and shape). Initialise plotting.
+        """
+        
+        self.SetTitle(directory+"\\"+file_name)
+        file_ = types.StringType(os.path.join(directory, file_name))
+
+        coordinates, values = self.get_coordinates_and_values(file_)        
+        if len(coordinates) < 1:
+            raise RuntimeError('Data with less than 1 coordinate is currently '
+                               'not supported')        
+        data = pd.read_csv(directory+"\\"+file_name,sep="\t", comment = '#',
+                           names=[col['name'] for col in coordinates+values])
+        coordinates = self.get_coordinate_details(coordinates, data)
+        shape  = self.get_shape(coordinates, values)
+        
+        if len(coordinates) == 1:
+            coordinates, data = self.add_dummy_coordinate(shape, coordinates, data)
+                
         self.coordinates = coordinates
-        # self.shaped_data = shaped_data
         self.values = values
         self.shape = shape
-        # temporary
         
-        # temporary, needs commenting, might be band-aid instead of fixing main issue
-        if len(coordinates) == 1:
-            self.coordinates = [dict(type='coordinate', name='None', size=1, start=1)] + self.coordinates
-            self.shape = (1, self.shape[0], self.shape[1]+1L)
-            rows = len(data[data.columns[0]])
-            data['None'] = pd.Series(np.ones(rows))
-            columns = data.columns.tolist()
-            columns = columns[-1:] + columns[:-1]
-            data = data[columns]
-        
-        
-        self.data_frame = data.set_index([coord['name'] for coord in self.coordinates])
-
-#        temporary
-        
+        self.data_frame = data.set_index([coord['name'] for coord in self.coordinates]) 
+        # A selection (aka slice) of the data corresponding to the shape:
+        # (coord1_value, coord2_value, ..., coordn_value, col_index)
         self.data_selection = [coord['start'] for coord in self.coordinates]+[1]
-
         
-        del coordinates
-        del values
-#        del shaped_data
-        del shape
-        del data
-        del next_
-        
-        if self.data_labels != None:
-            for label in self.data_labels:
-                label = '$'+label+'$'
-            
-
         self._set_axis_cb_choices()
         self._set_value_choices()
         self._set_coordinate_choices()
-        
-        # self.data_selection = [0 for __ in self.shaped_data.shape]
-        
 
         if self.value_func is None:
             self.draw(self.x_idx, self.y_idx, self.value_idx, recenter=True)
@@ -1256,18 +1251,45 @@ class MainFrame(wx.Frame):
                                recenter=True)
             
     def reload_data(self):
+        """
+        Reload the current data file so that newly-written data will be displayed.
         
+        """
         ###MIJ this needs to be via a greyed out button
         if self.filename == None:
             return
+
+        file_ = types.StringType(os.path.join(self.directory, self.filename))
+
+        coordinates, values = self.get_coordinates_and_values(file_)        
+        if len(coordinates) < 1:
+            raise RuntimeError('Data with less than 1 coordinate is currently '
+                               'not supported')        
+        data = pd.read_csv(file_,sep="\t", comment = '#',
+                           names=[col['name'] for col in coordinates+values])
+        coordinates = self.get_coordinate_details(coordinates, data)
+        shape  = self.get_shape(coordinates, values)
         
-        self.load_data(self.directory, self.filename)
+        if len(coordinates) == 1:
+            coordinates, data = self.add_dummy_coordinate(shape, coordinates, data)
+                
+        self.coordinates = coordinates
+        self.values = values
+        self.shape = shape
+        
+        self.data_frame = data.set_index([coord['name'] for coord in self.coordinates])
+
         if self.value_func is None:
             self.draw(self.x_idx, self.y_idx, self.value_idx, recenter=False)
         else:
             self.draw_function(self.value_func["function"], self.value_func["values"],
                                recenter=False)
     def draw(self, x_idx, y_idx, value, **kwargs):
+        """
+        Draws the slice of the given value at x_idx, y_idx, setting other coordinate 
+        values to whatever they are in the current data selection.
+        
+        """
 
         # Draw MainFrame object        
         
@@ -1280,24 +1302,27 @@ class MainFrame(wx.Frame):
         if value == -1:
             value = len(self.data_frame.columns)-1
         
-        selection = tuple(self.get_selection((x_idx, y_idx), value)[:-1])
-
-        slice_ = []
-        levels = []        
-        # Take a cross-section with fixed columns indicated by the selection
-        for i in range(0,len(selection)):
-            if selection[i] != slice(None):
-                slice_.append(selection[i])
-                levels.append(i)
-        slice_ = tuple(slice_)
-        levels = tuple(levels)
-        value_index = self.data_frame.columns[value]
+        data_slice = self.get_data_slice(value)
         
-        data_slice=self.data_frame.xs(slice_,level=levels)[value_index].unstack() 
         
-        self.left_panel.plot_window.draw(data_slice.columns,data_slice.index, data_slice)
-
+        if self.coordinates[x_idx]['labels'] == True:
+            self.left_panel.plot_window.draw(data_slice.columns, data_slice.index,
+                                             data_slice,labels = self.data_labels,
+                                             labelled_axis = 0)
+        elif self.coordinates[y_idx]['labels'] == True:
+            self.left_panel.plot_window.draw(data_slice.columns, data_slice.index,
+                                             data_slice,labels = self.data_labels,
+                                             labelled_axis = 1)            
+        else:
+            self.left_panel.plot_window.draw(data_slice.columns,data_slice.index,
+                                             data_slice)
+            
+    
     def draw_function(self, func, values, **kwargs):
+        """
+        Computes and displays the given function, on the currently selected slice.
+        
+        """
         self.value_idx = None
         
         self.value_func = {"function": func,
@@ -1309,14 +1334,71 @@ class MainFrame(wx.Frame):
         
         data_slices = [self.get_data_slice(-len(values) + i)
                        for i in value_indices]
-        computed_data = func([data_slices, self.get_coordinate(self.x_idx), self.get_coordinate(self.y_idx)])
+        computed_data = func([data_slices, data_slices[0].columns, data_slices[0].index])
+
+        if self.coordinates[self.x_idx]['labels'] == True:
+            self.left_panel.plot_window.draw(computed_data.columns, computed_data.index,
+                                             computed_data,labels = self.data_labels,
+                                             labelled_axis = 0)
+        elif self.coordinates[self.y_idx]['labels'] == True:
+            self.left_panel.plot_window.draw(computed_data.columns, computed_data.index,
+                                             computed_data,labels = self.data_labels,
+                                             labelled_axis = 1)            
+        else:
+            self.left_panel.plot_window.draw(computed_data.columns,computed_data.index,
+                                             computed_data)
+            
+    def draw_fourier_function(self, values):
+        """
+        Performs a fourier transform. If a function is currently selected, performs the 
+        function on the transformed data and then plots. Otherwise, plots the absolute 
+        value of each element.
         
-        self.left_panel.plot_window.draw(
-            self.get_coordinate(self.x_idx),
-            self.get_coordinate(self.y_idx),
-            computed_data,
-            **kwargs
-            )
+        Argument should be given as values = ["value1name, value2name, ...]. The slices
+        corresponding to these values, slice_v1 and slice_v2, are found, and then the 
+        transform is calculated over slice_v1 + i*slice_v2.
+        
+        """
+        
+        value_names = [coord['name'] for coord in self.values]
+        value_indices = [value_names.index(value) for value in values]
+        
+        # Test if changing "for i in value_indices" to get only first 2 will break things
+        data_slices = [self.get_data_slice(-len(values) + i)
+                       for i in value_indices]
+        if len(values) ==1:
+            complex_data = data_slices[0]
+        else:
+            complex_data = data_slices[0] + 1.0j*data_slices[1]
+        
+        for y in complex_data.index:
+            complex_data.loc[y,:] = np.fft.fft(complex_data.loc[y,:])
+        #delta f = 1/(tmax-tmin) (step frequency), fmax = 1/delta t (step time in time domain)
+        tmin = np.amin(complex_data.columns.tolist())
+        tmax = np.amax(complex_data.columns.tolist())
+        N = len(complex_data.columns)
+        tstep = float((tmax-tmin))/N
+        # calculate the frequency domain
+        xf = np.linspace(0,1.0/tstep,N)
+        complex_data = [complex_data.apply(lambda z: np.real(z)),
+                        complex_data.apply(lambda z: np.imag(z))]
+
+        if self.value_func != None:
+            func = self.value_func['function']
+            computed_data = func([complex_data, xf, data_slices[0].index])
+        else:
+            computed_data = np.abs(complex_data[0]+1.0j*complex_data[1])
+        # change the x-axis to the new frequency domain
+        computed_data.columns = xf
+        if self.coordinates[self.y_idx]['labels'] == True:
+            self.left_panel.plot_window.draw(computed_data.columns, computed_data.index,
+                                             computed_data,labels = self.data_labels,
+                                             labelled_axis = 1)            
+        else:
+            self.left_panel.plot_window.draw(computed_data.columns,computed_data.index,
+                                             computed_data)
+
+
 
     def get_selection(self, axis_idx, value=None):
         selection = copy.copy(self.data_selection)
@@ -1351,24 +1433,31 @@ class MainFrame(wx.Frame):
  
     def get_data_slice(self, value_axis):
         selection = tuple(self.get_selection((self.x_idx, self.y_idx), value_axis)[:-1])
-        
-        slice_=[]
-        level_ = []
-        # Take a cross-section holding the selected values fixed
+
+        slice_ = []
+        levels = []
+        # Take a cross-section with fixed columns indicated by the selection
         for i in range(0,len(selection)):
             if selection[i] != slice(None):
-                level_.append(i)
                 slice_.append(selection[i])
-        level_ = tuple(level_)
+                levels.append(i)
+                
         slice_ = tuple(slice_)
-    
-        value_index = self.data_frame.reset_index().columns[value_axis]
-        data_slice = self.data_frame.xs(slice_, level=level_)[value_index].unstack()
-        
+        levels = tuple(levels)
+        value_index = self.data_frame.columns[value_axis]
+                
+        # data with 2 or fewer coordinates can't be sliced (selection will be (slice(None), slice(None)))
+        if (slice_ != ()) & (levels != ()):
+            data_slice=self.data_frame.xs(slice_,level=levels)[value_index].unstack() 
+        else:
+            data_slice = self.data_frame[value_index].unstack()
+                
         if self.x_idx < self.y_idx:
             return np.transpose(data_slice)
         else:
             return data_slice
+        
+
 
     def _set_axis_cb_choices(self):
                 
@@ -1391,12 +1480,12 @@ class MainFrame(wx.Frame):
             x_idx_found = True
         except ValueError:
             x_idx_found = False
-            self.x_idx = 0
+            self.x_idx = 1
         
         try:
             self.y_idx = names.index(y_axis_previous)
         except ValueError:
-            self.y_idx = 1
+            self.y_idx = 0
         
         # make sure that not the same x and y axis coordinate is selected
         if self.x_idx == self.y_idx:
@@ -1486,5 +1575,5 @@ if __name__ == '__main__':
         directory, filename = os.path.split(sys.argv[1])
         app.frame1.directory = directory
         app.frame1.filename = filename
-        app.frame1.load_data(directory, filename)
+        wx.CallLater(0, app.frame1.load_data, directory, filename)
     app.MainLoop()
